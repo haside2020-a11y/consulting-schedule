@@ -3066,4 +3066,69 @@ function lightenHex(hex, amount) {
 // 데이터 변경 시마다 자동저장 (localStorage + Supabase) + 저장 버튼 상태 업데이트
 function saveState() {
   saveStateLocal();
+  setSaveStatus('↑ 저장 중…', 'rgba(255,220,100,0.9)');
+  syncToCloud().then(() => {
+    setSaveStatus('✓ 저장됨', 'rgba(100,255,150,0.9)');
+    setTimeout(() => setSaveStatus('', ''), 2000);
+  }).catch(() => {
+    setSaveStatus('● 로컬 저장 (오프라인)', 'rgba(255,180,80,0.9)');
+  });
+}
+
+// ============================================================
+// 데이터 마이그레이션 (버전 불일치 자동 수정)
+// ============================================================
+function migrateData() {
+  let changed = false;
+  const ilteoTypes = ['사전진단', '대면회의', '비대면회의'];
+  state.companies.forEach(c => {
+    if (c.consultingType === '일터혁신') {
+      const hasIlteoTypes = c.meetingTypes && c.meetingTypes.some(m => ilteoTypes.includes(m.name));
+      if (!hasIlteoTypes) {
+        c.meetingTypes = [
+          { name: '사전진단', target: 2, defaultHours: 2, isFace: true },
+          { name: '대면회의', target: 9, defaultHours: 2, isFace: true },
+          { name: '비대면회의', target: 3, defaultHours: 2, isFace: false }
+        ];
+        changed = true;
+      }
+    }
+  });
+  if (changed) saveStateLocal();
+}
+
+// ============================================================
+// 초기화
+// ============================================================
+calYear = new Date().getFullYear();
+calMonth = new Date().getMonth();
+
+loadState();
+migrateData();
+renderDashboard();
+refreshAllSelects();
+
+// Supabase에서 최신 데이터 비동기 로드
+(async () => {
+  setSaveStatus('⟳ 불러오는 중…', 'rgba(150,220,255,0.9)');
+  const loaded = await loadStateFromCloud();
+  if (loaded) {
+    migrateData();
+    renderDashboard();
+    refreshAllSelects();
+    setSaveStatus('✓ 최신 데이터', 'rgba(100,255,150,0.9)');
+    setTimeout(() => setSaveStatus('', ''), 2000);
+  } else {
+    if (state.companies.length > 0 || state.meetings.length > 0) {
+      setSaveStatus('↑ 클라우드로 업로드 중…', 'rgba(255,220,100,0.9)');
+      await syncToCloud();
+      setSaveStatus('✓ 업로드 완료', 'rgba(100,255,150,0.9)');
+      setTimeout(() => setSaveStatus('', ''), 2000);
+    } else {
+      setSaveStatus('', '');
+    }
+  }
+})();
+</script>
+</body>
   setSave
