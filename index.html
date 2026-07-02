@@ -2521,7 +2521,18 @@ let _ocrWorkerPromise = null;
 function getOcrWorker() {
   if (_ocrWorker) return Promise.resolve(_ocrWorker);
   if (_ocrWorkerPromise) return _ocrWorkerPromise;
-  _ocrWorkerPromise = Tesseract.createWorker(['kor', 'eng']).then(w => { _ocrWorker = w; return w; });
+  console.log('[워터마크 OCR] 엔진 초기화 시작 (최초 1회, 언어 데이터 다운로드 포함)...');
+  _ocrWorkerPromise = Tesseract.createWorker(['kor', 'eng'], 1, {
+    logger: m => console.log('[워터마크 OCR]', m.status, m.progress != null ? Math.round(m.progress*100)+'%' : '')
+  }).then(w => {
+    _ocrWorker = w;
+    console.log('[워터마크 OCR] 엔진 초기화 완료');
+    return w;
+  }).catch(e => {
+    _ocrWorkerPromise = null; // 실패 시 다음 시도에서 재시도 가능하도록 초기화
+    console.error('[워터마크 OCR] 엔진 초기화 실패 — 네트워크 차단, file:// 로컬 실행, 또는 CDN 접근 문제일 수 있습니다.', e);
+    throw e;
+  });
   return _ocrWorkerPromise;
 }
 
@@ -2586,14 +2597,24 @@ function parseWatermarkText(raw) {
 }
 
 async function recognizeWatermarkTimestamp(file) {
+  let worker;
+  try {
+    worker = await getOcrWorker();
+  } catch (e) {
+    console.error('[워터마크 OCR] 엔진을 사용할 수 없어 인식을 건너뜁니다:', file?.name, e?.message || e);
+    return null;
+  }
   try {
     const imgEl = await loadImageElement(file);
     const cropCanvas = cropWatermarkRegion(imgEl);
-    const worker = await getOcrWorker();
     const { data } = await worker.recognize(cropCanvas);
-    return parseWatermarkText(data?.text || '');
+    const parsed = parseWatermarkText(data?.text || '');
+    if (!parsed) {
+      console.log('[워터마크 OCR] 텍스트는 인식됐지만 날짜/시간 패턴을 찾지 못함:', file?.name, '| 원문:', JSON.stringify(data?.text || ''));
+    }
+    return parsed;
   } catch (e) {
-    console.warn('워터마크 OCR 실패:', file?.name, e);
+    console.error('[워터마크 OCR] 이미지 처리 중 오류:', file?.name, e?.message || e);
     return null;
   }
 }
