@@ -260,6 +260,8 @@ async function dbSave(key, val) {
   .meeting-table td { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); font-size: 13px; vertical-align: middle; }
   .meeting-table tr:hover td { background: var(--gray-50); }
   .meeting-num { font-size: 11px; color: var(--gray-400); }
+  .meeting-note-input { width: 100%; box-sizing: border-box; resize: none; font-size: 11px; font-family: inherit; padding: 4px 6px; border: 1px solid var(--gray-300); border-radius: 4px; line-height: 1.35; }
+  .meeting-note-input:focus { outline: none; border-color: var(--primary-light); }
   .seq-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-size: 11px; font-weight: 700; background: var(--gray-200); color: var(--gray-700); }
 
   /* ===== 사진 크로스체크 ===== */
@@ -430,11 +432,16 @@ async function dbSave(key, val) {
         </select>
       </div>
       <div style="overflow-x:auto;">
-        <table class="meeting-table">
+        <table class="meeting-table" style="table-layout:fixed;">
+          <colgroup>
+            <col style="width:5%;"><col style="width:10%;"><col style="width:5%;">
+            <col style="width:13%;"><col style="width:13%;"><col style="width:6%;">
+            <col style="width:14%;"><col style="width:13%;"><col style="width:11%;"><col style="width:10%;">
+          </colgroup>
           <thead>
             <tr>
               <th>순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th>
-              <th>시간</th><th>🗂️ 권장폴더명</th><th>비고</th><th>관리</th>
+              <th>시간</th><th>🗂️ 권장폴더명</th><th>업무수행내용</th><th>관리</th><th>메모</th>
             </tr>
           </thead>
           <tbody id="meeting-tbody"></tbody>
@@ -2214,7 +2221,7 @@ function renderMeetingList() {
     const prev = meetings[i-1];
     const showTodayDivider = prev && prev.date < todayStr && m.date >= todayStr;
     const dividerRow = showTodayDivider ? `<tr class="today-divider-row">
-      <td colspan="9" style="padding:0;border:none;background:transparent;">
+      <td colspan="10" style="padding:0;border:none;background:transparent;">
         <div style="display:flex;align-items:center;gap:10px;margin:10px 0;">
           <div style="flex:1;height:2px;background:var(--warning);"></div>
           <div style="font-size:11px;font-weight:700;color:var(--warning);white-space:nowrap;">🔽 오늘 (${formatDate(todayStr)}) — 지난 일정 / 향후 일정</div>
@@ -2243,15 +2250,27 @@ function renderMeetingList() {
           📁 ${folderName}
         </span>
       </td>
-      <td style="color:var(--gray-500);font-size:12px;">${m.memo||''}</td>
+      <td style="color:var(--gray-500);font-size:12px;word-break:break-word;white-space:normal;">${m.memo||''}</td>
       <td>
         <div style="display:flex;gap:4px;">
           <button class="btn btn-outline btn-sm" onclick="showMeetingDetail('${m.id}')">수정</button>
           <button class="btn btn-danger btn-sm" onclick="deleteMeeting('${m.id}')">삭제</button>
         </div>
       </td>
+      <td>
+        <textarea class="meeting-note-input" rows="2" placeholder="메모"
+          onchange="updateMeetingNote('${m.id}', this.value)">${m.note||''}</textarea>
+      </td>
     </tr>`;
   }).join('');
+}
+
+// 미팅 목록의 개인 메모 저장 (업무수행내용과 별개의 자유메모 칸)
+function updateMeetingNote(meetingId, value) {
+  const m = state.meetings.find(mm => mm.id === meetingId);
+  if (!m) return;
+  m.note = value;
+  saveState();
 }
 
 // ============================================================
