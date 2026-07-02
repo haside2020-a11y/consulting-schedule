@@ -10,7 +10,11 @@
 // ── Supabase 클라이언트 ──
 const SUPABASE_URL = "https://hgwvpbzrwfkehepassut.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vPAn-WpGRutXeQ16U0mnbQ_FKkw-tXZ";
-const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// persistSession 등을 끄면 브라우저 트래킹 방지 기능이 Supabase 저장소 접근을 막아도
+// 클라이언트 초기화/요청 자체는 영향받지 않음 (로그인 기능을 안 쓰므로 세션 저장 불필요)
+const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+});
 
 async function dbLoad() {
   try {
@@ -3139,3 +3143,39 @@ function migrateData() {
 }
 
 // ============================================================
+// 초기화
+// ============================================================
+calYear = new Date().getFullYear();
+calMonth = new Date().getMonth();
+
+// 로컬 캐시로 먼저 빠르게 렌더링 후, Supabase 최신 데이터로 갱신
+loadState();
+migrateData();
+renderDashboard();
+refreshAllSelects();
+
+// Supabase에서 최신 데이터 비동기 로드
+(async () => {
+  setSaveStatus('⟳ 불러오는 중…', 'rgba(150,220,255,0.9)');
+  const loaded = await loadStateFromCloud();
+  if (loaded) {
+    migrateData();
+    renderDashboard();
+    refreshAllSelects();
+    setSaveStatus('✓ 최신 데이터', 'rgba(100,255,150,0.9)');
+    setTimeout(() => setSaveStatus('', ''), 2000);
+  } else {
+    // Supabase가 비어있고 로컬에 데이터가 있으면 → 클라우드로 업로드
+    if (state.companies.length > 0 || state.meetings.length > 0) {
+      setSaveStatus('↑ 클라우드로 업로드 중…', 'rgba(255,220,100,0.9)');
+      await syncToCloud();
+      setSaveStatus('✓ 업로드 완료', 'rgba(100,255,150,0.9)');
+      setTimeout(() => setSaveStatus('', ''), 2000);
+    } else {
+      setSaveStatus('', '');
+    }
+  }
+})();
+</script>
+</body>
+</html>
