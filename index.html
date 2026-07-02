@@ -2743,7 +2743,8 @@ async function checkFolderStructure(dirHandle) {
           wm = ocrCache[cacheKey]; ocrCachedCount++;
         } else {
           wm = await recognizeWatermarkTimestamp(file);
-          ocrCache[cacheKey] = wm; ocrCacheDirty = true; ocrNewCount++;
+          ocrNewCount++;
+          if (wm) { ocrCache[cacheKey] = wm; ocrCacheDirty = true; } // 실패(null)는 캐시하지 않음 — 다음 스캔 때 재시도
         }
         ocrDate = wm?.date || null;
         ocrTime = wm?.time || null;
@@ -2887,7 +2888,8 @@ async function handlePhotoFiles(files) {
         wm = ocrCache2[cacheKey2]; ocrCachedCount2++;
       } else {
         wm = await recognizeWatermarkTimestamp(file);
-        ocrCache2[cacheKey2] = wm; ocrCacheDirty2 = true; ocrNewCount2++;
+        ocrNewCount2++;
+        if (wm) { ocrCache2[cacheKey2] = wm; ocrCacheDirty2 = true; } // 실패(null)는 캐시하지 않음 — 다음 스캔 때 재시도
       }
       const ocrDate = wm?.date || null;
       const ocrTime = wm?.time || null;
