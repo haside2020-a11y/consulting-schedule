@@ -787,7 +787,8 @@ async function dbSave(key, val) {
 // ============================================================
 let state = {
   companies: [],
-  meetings: []
+  meetings: [],
+  dismissedAlerts: []
 };
 
 const STORAGE_KEY = 'consulting_schedule_v3';
@@ -805,6 +806,7 @@ function loadStateLocal() {
 async function syncToCloud() {
   await dbSave('companies', state.companies);
   await dbSave('meetings', state.meetings);
+  await dbSave('dismissedAlerts', state.dismissedAlerts || []);
 }
 
 function saveState() {
@@ -817,6 +819,7 @@ async function loadStateFromCloud() {
   if (remote && (remote.companies || remote.meetings)) {
     state.companies = remote.companies || [];
     state.meetings  = remote.meetings  || [];
+    state.dismissedAlerts = remote.dismissedAlerts || [];
     saveStateLocal(); // 로컬 캐시 업데이트
     return true;
   }
@@ -825,6 +828,7 @@ async function loadStateFromCloud() {
 
 function loadState() {
   loadStateLocal();
+  if (!state.dismissedAlerts) state.dismissedAlerts = [];
 }
 
 // ============================================================
@@ -2079,23 +2083,33 @@ function renderDashboard() {
     if (!c || c.consultingType === '일터혁신') return;
     const diaryDL = addDays(m.date, 2); // 방문일 포함 3일 = +2
     const diff = daysDiff(today(), diaryDL);
+    const diaryKey = 'diary_' + m.id;
     if (diff < 0) {
-      alerts.push({ company: c.name, msg: `⚠️ 수행일지 기한 초과 (${formatDate(m.date)} 방문분, 기한: ${formatDate(diaryDL)})`, dDiff: diff, color: c.color, expired: true });
+      alerts.push({ company: c.name, msg: `⚠️ 수행일지 기한 초과 (${formatDate(m.date)} 방문분, 기한: ${formatDate(diaryDL)})`, dDiff: diff, color: c.color, expired: true, key: diaryKey });
     } else if (diff <= 3) {
-      alerts.push({ company: c.name, msg: `📝 수행일지 마감 D-${diff}: ${formatDate(m.date)} 방문분 (기한: ${formatDate(diaryDL)})`, dDiff: diff, color: c.color });
+      alerts.push({ company: c.name, msg: `📝 수행일지 마감 D-${diff}: ${formatDate(m.date)} 방문분 (기한: ${formatDate(diaryDL)})`, dDiff: diff, color: c.color, key: diaryKey });
     }
   });
 
-  if (alerts.length === 0) {
+  // 사용자가 "확인"으로 넘긴 알림은 목록에서 제외 (운영기관 승인 전에는 수행일지 등록 불가한 경우 등)
+  const dismissed = state.dismissedAlerts || [];
+  const visibleAlerts = alerts.filter(a => !a.key || !dismissed.includes(a.key));
+
+  if (visibleAlerts.length === 0) {
     deadlineContainer.innerHTML = '<div class="alert-box alert-success">임박한 마감일이 없습니다. ✅</div>';
   } else {
-    alerts.sort((a,b) => a.dDiff - b.dDiff);
-    deadlineContainer.innerHTML = alerts.map(a => {
+    visibleAlerts.sort((a,b) => a.dDiff - b.dDiff);
+    deadlineContainer.innerHTML = visibleAlerts.map(a => {
       const cls = a.done ? 'deadline-alert-ok' : a.expired ? 'deadline-alert-urgent' : a.dDiff <= 7 ? 'deadline-alert-urgent' : a.dDiff <= 14 ? 'deadline-alert-warning' : 'deadline-alert-ok';
       const icon = a.done ? '✅' : a.expired ? '⛔' : a.dDiff <= 7 ? '🔴' : a.dDiff <= 14 ? '🟡' : '🟢';
       const doneBtn = a.planBtn ? `togglePlanSubmit('${a.companyId}')` :
                       a.diagEndBtn ? `toggleIlteoDone('${a.companyId}','diagEndDone')` :
                       a.selfReviewBtn ? `toggleIlteoDone('${a.companyId}','selfReviewDone')` : null;
+      const actionBtn = doneBtn
+        ? `<button onclick="${doneBtn}" style="flex-shrink:0;padding:3px 10px;font-size:11px;border-radius:6px;border:1px solid #86efac;background:#dcfce7;color:#16a34a;cursor:pointer;font-weight:600;">✅ 완료</button>`
+        : a.key
+        ? `<button onclick="dismissAlert('${a.key}')" title="운영기관 승인 전이라 수행일지를 올릴 수 없는 경우 등, 확인 후 목록에서 지웁니다." style="flex-shrink:0;padding:3px 10px;font-size:11px;border-radius:6px;border:1px solid var(--gray-300);background:white;color:var(--gray-600);cursor:pointer;font-weight:600;">확인</button>`
+        : '';
       return `<div class="deadline-alert ${cls}" style="display:flex;align-items:center;justify-content:space-between;">
         <div style="display:flex;align-items:center;gap:8px;">
           <div class="deadline-alert-icon">${icon}</div>
@@ -2104,7 +2118,7 @@ function renderDashboard() {
             ${a.msg} ${!a.expired ? `(D-${a.dDiff})` : ''}
           </div>
         </div>
-        ${doneBtn ? `<button onclick="${doneBtn}" style="flex-shrink:0;padding:3px 10px;font-size:11px;border-radius:6px;border:1px solid #86efac;background:#dcfce7;color:#16a34a;cursor:pointer;font-weight:600;">✅ 완료</button>` : ''}
+        ${actionBtn}
       </div>`;
     }).join('');
   }
@@ -2177,6 +2191,7 @@ function renderMeetingList() {
   }
   emptyEl.style.display = 'none';
 
+  const todayStr = today();
   tbody.innerHTML = meetings.map((m, i) => {
     const company = state.companies.find(c => c.id === m.companyId);
     const t = company ? getMeetingType(company, m.typeId) : null;
@@ -2190,9 +2205,27 @@ function renderMeetingList() {
 
     const folderName = getSuggestedFolderName(m);
     const companySeq = getCompanyMeetingSeq(m.companyId, m.id);
-    return `<tr>
+
+    // 오늘 기준 지난 일정/향후 일정 구분선 — 직전 미팅은 과거, 이번 미팅은 오늘 이후일 때 삽입
+    const prev = meetings[i-1];
+    const showTodayDivider = prev && prev.date < todayStr && m.date >= todayStr;
+    const dividerRow = showTodayDivider ? `<tr class="today-divider-row">
+      <td colspan="9" style="padding:0;border:none;background:transparent;">
+        <div style="display:flex;align-items:center;gap:10px;margin:10px 0;">
+          <div style="flex:1;height:2px;background:var(--warning);"></div>
+          <div style="font-size:11px;font-weight:700;color:var(--warning);white-space:nowrap;">🔽 오늘 (${formatDate(todayStr)}) — 지난 일정 / 향후 일정</div>
+          <div style="flex:1;height:2px;background:var(--warning);"></div>
+        </div>
+      </td>
+    </tr>` : '';
+
+    const isPast = m.date < todayStr;
+    const isToday = m.date === todayStr;
+    const rowStyle = isToday ? 'background:#fffbeb;' : isPast ? 'color:var(--gray-400);' : '';
+
+    return dividerRow + `<tr style="${rowStyle}">
       <td><span class="seq-badge">${i+1}</span></td>
-      <td style="font-weight:600;">${m.date.replace(/-/g,'.')}</td>
+      <td style="font-weight:600;">${m.date.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
       <td>${dowNames[dow]}</td>
       <td>
         <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${company?.color||'#888'};margin-right:6px;"></span>
@@ -2282,6 +2315,14 @@ function toggleIlteoDone(companyId, field) {
   saveState();
   renderDashboard();
   renderCalendar();
+}
+
+// 마감일 알림 "확인" 처리 — 해당 알림을 다시 보이지 않게 숨김 (예: 운영기관 승인 전이라 수행일지 제출이 불가능한 경우)
+function dismissAlert(key) {
+  if (!state.dismissedAlerts) state.dismissedAlerts = [];
+  if (!state.dismissedAlerts.includes(key)) state.dismissedAlerts.push(key);
+  saveState();
+  renderDashboard();
 }
 
 function refreshPhotoFilters() {
@@ -3094,41 +3135,7 @@ function migrateData() {
       }
     }
   });
-  if (changed) saveStateLocal();
+  if (changed) saveState();
 }
 
 // ============================================================
-// 초기화
-// ============================================================
-calYear = new Date().getFullYear();
-calMonth = new Date().getMonth();
-
-loadState();
-migrateData();
-renderDashboard();
-refreshAllSelects();
-
-// Supabase에서 최신 데이터 비동기 로드
-(async () => {
-  setSaveStatus('⟳ 불러오는 중…', 'rgba(150,220,255,0.9)');
-  const loaded = await loadStateFromCloud();
-  if (loaded) {
-    migrateData();
-    renderDashboard();
-    refreshAllSelects();
-    setSaveStatus('✓ 최신 데이터', 'rgba(100,255,150,0.9)');
-    setTimeout(() => setSaveStatus('', ''), 2000);
-  } else {
-    if (state.companies.length > 0 || state.meetings.length > 0) {
-      setSaveStatus('↑ 클라우드로 업로드 중…', 'rgba(255,220,100,0.9)');
-      await syncToCloud();
-      setSaveStatus('✓ 업로드 완료', 'rgba(100,255,150,0.9)');
-      setTimeout(() => setSaveStatus('', ''), 2000);
-    } else {
-      setSaveStatus('', '');
-    }
-  }
-})();
-</script>
-</body>
-  setSave
