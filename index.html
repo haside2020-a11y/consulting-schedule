@@ -587,8 +587,11 @@ async function dbSave(key, val) {
         <button class="btn btn-gray" onclick="clearPhotoResults()">초기화</button>
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;background:#f1f5f9;padding:6px 10px;border-radius:6px;">
           <input type="checkbox" id="ocr-toggle">
-          🕐 워터마크 OCR 검증 사용 (사진마다 인식 처리라 느립니다)
+          🕐 워터마크 OCR 검증 사용 (이미 검증한 사진은 캐시로 건너뜁니다)
         </label>
+        <button class="btn btn-outline" style="font-size:11px;padding:6px 10px;" onclick="clearOcrCache()" title="사진을 교체했거나 강제로 다시 인식하고 싶을 때 사용">
+          🗑️ OCR 캐시 초기화
+        </button>
       </div>
       <div id="folder-api-note" style="font-size:11px;color:var(--gray-500);margin-bottom:8px;display:none;"></div>
 
@@ -2595,6 +2598,23 @@ async function recognizeWatermarkTimestamp(file) {
   }
 }
 
+// -------- OCR 결과 캐시 (localStorage) --------
+// 같은 사진(파일명+크기+수정시각)은 재스캔 시 OCR을 다시 돌리지 않고 캐시된 결과를 사용
+const OCR_CACHE_KEY = 'consulting_schedule_ocr_cache_v1';
+function loadOcrCache() {
+  try { return JSON.parse(localStorage.getItem(OCR_CACHE_KEY) || '{}'); } catch(e) { return {}; }
+}
+function saveOcrCache(cache) {
+  try { localStorage.setItem(OCR_CACHE_KEY, JSON.stringify(cache)); } catch(e) { /* 용량 초과 등은 무시 */ }
+}
+function ocrCacheKeyFor(file) {
+  return `${file.name}_${file.size}_${file.lastModified}`;
+}
+function clearOcrCache() {
+  try { localStorage.removeItem(OCR_CACHE_KEY); } catch(e) {}
+  alert('워터마크 OCR 캐시를 초기화했습니다. 다음 검증부터 모든 사진을 다시 인식합니다.');
+}
+
 // -------- 폴더 API 방식 (Chrome/Edge) --------
 async function scanFolderAPI() {
   if (!window.showDirectoryPicker) {
@@ -2640,6 +2660,8 @@ async function checkFolderStructure(dirHandle) {
   const scannedDates = new Set(scannedFolders.map(f => f.folderDate));
 
   const ocrEnabled = document.getElementById('ocr-toggle')?.checked;
+  const ocrCache = ocrEnabled ? loadOcrCache() : null;
+  let ocrCacheDirty = false, ocrNewCount = 0, ocrCachedCount = 0;
   let totalMatch=0, folderMismatch=0, exifMismatch=0, ocrMismatch=0, noDate=0, noPhoto=0;
   let folderResultHtml = '';
 
@@ -2649,6 +2671,9 @@ async function checkFolderStructure(dirHandle) {
     // 해당 날짜 미팅의 업체 유형 파악 (일터혁신이면 EXIF 생략)
     const meetingCompany = meeting ? state.companies.find(c => c.id === meeting.companyId) : null;
     const isIlteo = meetingCompany?.consultingType === '일터혁신';
+    // 비대면 미팅 여부 (미팅 유형의 isFace=false). 미팅을 못 찾으면 폴더명의 "(비대면)" 표기로 추정.
+    const meetingType = meeting && meetingCompany ? getMeetingType(meetingCompany, meeting.typeId) : null;
+    const isFaceMeeting = meetingType ? meetingType.isFace : (/비대면/.test(folder.name) ? false : null);
 
     // ① 폴더명 vs 권장폴더명
     const folderNameOk = suggested ? folder.name === suggested : null;
@@ -2662,7 +2687,7 @@ async function checkFolderStructure(dirHandle) {
       }
     }
 
-    if (photos.length === 0) { noPhoto++; }
+    if (photos.length === 0 && isFaceMeeting !== false) { noPhoto++; }
 
     // ② 각 사진 체크 (구조혁신: EXIF+파일명, 일터혁신: 파일명만)
     let photoRows = '';
@@ -2688,10 +2713,17 @@ async function checkFolderStructure(dirHandle) {
         if (nameOk === false) { exifMismatch++; anyExifMismatch = true; }
       }
 
-      // ⑤ 사진에 찍힌 타임스탬프 워터마크 OCR 인식 (선택, 느림)
+      // ⑤ 사진에 찍힌 타임스탬프 워터마크 OCR 인식 (선택, 느림 — 이미 검증한 사진은 캐시 사용)
       let ocrDate = null, ocrTime = null, ocrOk = null;
       if (ocrEnabled) {
-        const wm = await recognizeWatermarkTimestamp(file);
+        const cacheKey = ocrCacheKeyFor(file);
+        let wm;
+        if (Object.prototype.hasOwnProperty.call(ocrCache, cacheKey)) {
+          wm = ocrCache[cacheKey]; ocrCachedCount++;
+        } else {
+          wm = await recognizeWatermarkTimestamp(file);
+          ocrCache[cacheKey] = wm; ocrCacheDirty = true; ocrNewCount++;
+        }
         ocrDate = wm?.date || null;
         ocrTime = wm?.time || null;
         ocrOk = ocrDate ? ocrDate === folder.folderDate : null;
@@ -2718,7 +2750,7 @@ async function checkFolderStructure(dirHandle) {
     }
 
     // 전체 상태 판단
-    const allOk = folderNameOk !== false && !anyExifMismatch && !anyOcrMismatch && photos.length > 0;
+    const allOk = folderNameOk !== false && !anyExifMismatch && !anyOcrMismatch && (photos.length > 0 || isFaceMeeting === false);
     if (allOk) totalMatch++;
 
     const statusColor = allOk ? '#dcfce7' : '#fee2e2';
@@ -2737,11 +2769,11 @@ async function checkFolderStructure(dirHandle) {
         </div>
         <div style="text-align:right;font-size:11px;">
           <div>폴더명: ${folderNameOk === true ? '✅ 일치' : folderNameOk === false ? `❌ 불일치 (권장: ${suggested||'미등록'})` : '➖'}</div>
-          <div>사진 ${photos.length}장 · ${isIlteo ? '파일명' : 'EXIF'}: ${anyExifMismatch ? '❌ 불일치' : photos.length===0 ? '⚠️ 없음' : '✅ 일치'}</div>
+          <div>사진 ${photos.length}장 · ${isIlteo ? '파일명' : 'EXIF'}: ${anyExifMismatch ? '❌ 불일치' : photos.length===0 ? (isFaceMeeting===false ? '➖ 비대면(해당없음)' : '⚠️ 없음') : '✅ 일치'}</div>
           ${ocrEnabled ? `<div>워터마크 OCR: ${anyOcrMismatch ? '❌ 불일치' : photos.length===0 ? '⚠️ 없음' : '✅ 일치'}</div>` : ''}
         </div>
       </div>
-      ${photos.length > 0 ? `<div>${photoRows}</div>` : '<div style="font-size:11px;color:var(--warning);">⚠️ 이 폴더에 사진이 없습니다.</div>'}
+      ${photos.length > 0 ? `<div>${photoRows}</div>` : (isFaceMeeting === false ? '<div style="font-size:11px;color:var(--gray-500);">➖ 비대면 미팅 — 사진 불필요</div>' : '<div style="font-size:11px;color:var(--warning);">⚠️ 이 폴더에 사진이 없습니다.</div>')}
     </div>`;
   }
 
@@ -2774,9 +2806,11 @@ async function checkFolderStructure(dirHandle) {
   document.getElementById('folder-check-results').innerHTML = folderResultHtml || '<div style="color:var(--gray-400);font-size:13px;">날짜 폴더가 없거나 인식되지 않았습니다.</div>';
   document.getElementById('photo-missing-list').innerHTML = missingHtml;
 
+  if (ocrEnabled && ocrCacheDirty) saveOcrCache(ocrCache);
+
   document.getElementById('photo-empty').style.display = 'none';
   document.getElementById('photo-check-results').style.display = 'block';
-  document.getElementById('folder-api-note').textContent = `📂 분석 완료: ${scannedFolders.length}개 폴더 스캔됨${ocrEnabled ? ' (OCR 검증 포함)' : ''}`;
+  document.getElementById('folder-api-note').textContent = `📂 분석 완료: ${scannedFolders.length}개 폴더 스캔됨${ocrEnabled ? ` (OCR: 신규 ${ocrNewCount}장, 캐시 ${ocrCachedCount}장)` : ''}`;
 }
 
 // -------- 파일 직접 선택 방식 (폴백) --------
@@ -2797,6 +2831,8 @@ async function handlePhotoFiles(files) {
   const faceDates = new Set(faceMeetings.map(m => m.date));
   const matchedDates = new Set();
   const ocrEnabled = document.getElementById('ocr-toggle')?.checked;
+  const ocrCache2 = ocrEnabled ? loadOcrCache() : null;
+  let ocrCacheDirty2 = false, ocrNewCount2 = 0, ocrCachedCount2 = 0;
   let matchCount=0, mismatchCount=0, nodateCount=0, ocrMismatchCount=0;
   let fileListHtml = '';
 
@@ -2824,7 +2860,14 @@ async function handlePhotoFiles(files) {
 
     let ocrText = '';
     if (ocrEnabled) {
-      const wm = await recognizeWatermarkTimestamp(file);
+      const cacheKey2 = ocrCacheKeyFor(file);
+      let wm;
+      if (Object.prototype.hasOwnProperty.call(ocrCache2, cacheKey2)) {
+        wm = ocrCache2[cacheKey2]; ocrCachedCount2++;
+      } else {
+        wm = await recognizeWatermarkTimestamp(file);
+        ocrCache2[cacheKey2] = wm; ocrCacheDirty2 = true; ocrNewCount2++;
+      }
       const ocrDate = wm?.date || null;
       const ocrTime = wm?.time || null;
       if (ocrDate && photoDate && ocrDate !== photoDate) ocrMismatchCount++;
@@ -2850,6 +2893,8 @@ async function handlePhotoFiles(files) {
         const c=state.companies.find(co=>co.id===m.companyId);
         return `<div class="photo-item" style="background:#fff3cd;"><span>📷</span><div><div style="font-weight:700;">${getSuggestedFolderName(m)}</div><div style="font-size:11px;">${c?.name||'?'} · ${formatDate(m.date)} · 사진 없음</div></div></div>`;
       }).join('');
+
+  if (ocrEnabled && ocrCacheDirty2) saveOcrCache(ocrCache2);
 
   document.getElementById('photo-match-count').textContent = matchCount;
   document.getElementById('photo-folder-mismatch').textContent = '-';
