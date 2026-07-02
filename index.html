@@ -2549,19 +2549,21 @@ function loadImageElement(file) {
 // 워터마크가 찍힌 하단 중앙 영역만 잘라 확대한 캔버스를 반환 (OCR 정확도 향상)
 function cropWatermarkRegion(imgEl) {
   const W = imgEl.naturalWidth, H = imgEl.naturalHeight;
-  const fontSize = W * 0.03;   // TIMESTAMP_FONT_RATIO (timestamp_tool.html과 동일)
-  const pad = W * 0.03;
-  const cropH = Math.min(H, fontSize * 2.4);
-  const cropY = Math.max(0, H - pad - fontSize * 1.6);
-  const scale = 3;
+  // 실제 사용 중인 타임스탬프 카메라 앱 기준: 좌측 하단, 2줄(날짜 / 오전·오후 시간), 흰색 굵은 글씨
+  // (우측 상단 "TIME STAMP" 로고와 세트 — 위치는 항상 좌측 하단으로 고정된다고 확인됨)
+  const cropW = W * 0.62;   // 좌측 62% 폭 (날짜 줄이 길어도 여유있게)
+  const cropH = H * 0.17;   // 하단 17% 높이 (두 줄 + 여백)
+  const cropX = 0;
+  const cropY = H - cropH;
+  const scale = 2.5;
 
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(W * scale);
+  canvas.width = Math.round(cropW * scale);
   canvas.height = Math.round(cropH * scale);
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(imgEl, 0, cropY, W, cropH, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(imgEl, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
