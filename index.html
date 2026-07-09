@@ -2141,7 +2141,8 @@ function renderDashboard() {
   // Summary — 구조혁신/일터혁신 분리
   function getMeetingStats(companies) {
     const ids = new Set(companies.map(c => c.id));
-    const meetings = state.meetings.filter(m => ids.has(m.companyId));
+    // 날짜가 지난(오늘 포함) 미팅만 "완료"로 집계 — 미래에 계획만 잡힌 건 통계에서 제외
+    const meetings = state.meetings.filter(m => ids.has(m.companyId) && m.date <= today());
     const target = companies.reduce((s,c) => s + c.meetingTypes.reduce((ss,t)=>ss+t.target,0), 0);
     const face = meetings.filter(m => {
       const c = state.companies.find(co => co.id === m.companyId);
