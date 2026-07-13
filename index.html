@@ -440,7 +440,7 @@ async function dbSave(key, val) {
           </colgroup>
           <thead>
             <tr>
-              <th>순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th>
+              <th>월순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th>
               <th>시간</th><th>🗂️ 권장폴더명</th><th>업무수행내용</th><th>관리</th><th>메모</th>
             </tr>
           </thead>
@@ -2239,74 +2239,122 @@ function renderMeetingList() {
   const tbody = document.getElementById('meeting-tbody');
   const emptyEl = document.getElementById('meeting-list-empty');
 
-  if (meetings.length === 0) {
+  if (state.meetings.length === 0) {
     tbody.innerHTML = '';
     emptyEl.style.display = 'block';
     return;
   }
   emptyEl.style.display = 'none';
 
+  // ── 표시할 날짜 범위 결정: 월 필터가 있으면 그 달 전체, 없으면 등록된 전체 미팅의 최소~최대 달 전체 ──
+  let rangeStart, rangeEnd;
+  if (monthFilter) {
+    const [ry, rm] = monthFilter.split('-').map(Number);
+    rangeStart = `${monthFilter}-01`;
+    rangeEnd = `${monthFilter}-${String(new Date(ry, rm, 0).getDate()).padStart(2,'0')}`;
+  } else {
+    const allDates = state.meetings.map(m => m.date).sort();
+    const minD = strToDate(allDates[0]);
+    const maxD = strToDate(allDates[allDates.length - 1]);
+    rangeStart = `${minD.getFullYear()}-${String(minD.getMonth()+1).padStart(2,'0')}-01`;
+    const endY = maxD.getFullYear(), endM = maxD.getMonth() + 1;
+    rangeEnd = `${endY}-${String(endM).padStart(2,'0')}-${String(new Date(endY, endM, 0).getDate()).padStart(2,'0')}`;
+  }
+
+  // 필터 적용된(회사/유형 필터 반영) 미팅을 날짜별로 매핑
+  const meetingsByDate = {};
+  meetings.forEach(m => { (meetingsByDate[m.date] = meetingsByDate[m.date] || []).push(m); });
+
+  // 월별 총 건수(필터 반영)
+  const monthTotals = {};
+  meetings.forEach(m => { const mk = m.date.slice(0,7); monthTotals[mk] = (monthTotals[mk]||0) + 1; });
+
   const todayStr = today();
-  tbody.innerHTML = meetings.map((m, i) => {
-    const company = state.companies.find(c => c.id === m.companyId);
-    const t = company ? getMeetingType(company, m.typeId) : null;
-    const typeClass = t?.isFace ? 'type-face' : m.typeId.includes('보고서') ? 'type-report' : 'type-research';
-    const isGojo = company?.consultingType !== '일터혁신';
-    const d3 = isGojo ? addDays(m.date, 2) : null; // 방문일 포함 3일 = +2 (구조혁신만)
-    const d3diff = d3 ? daysDiff(today(), d3) : null;
-    const d3color = d3diff === null ? 'var(--gray-300)' : d3diff < 0 ? 'var(--danger)' : d3diff <= 2 ? 'var(--warning)' : 'var(--gray-500)';
-    const dow = strToDate(m.date).getDay();
-    const dowNames = ['일','월','화','수','목','금','토'];
+  const dowNames = ['일','월','화','수','목','금','토'];
 
-    const folderName = getSuggestedFolderName(m);
-    const companySeq = getCompanyMeetingSeq(m.companyId, m.id);
+  let html = '';
+  let curMonth = null;
+  let monthSeq = 0;
+  const d = strToDate(rangeStart);
+  const endDate = strToDate(rangeEnd);
 
-    // 오늘 기준 지난 일정/향후 일정 구분선 — 직전 미팅은 과거, 이번 미팅은 오늘 이후일 때 삽입
-    const prev = meetings[i-1];
-    const showTodayDivider = prev && prev.date < todayStr && m.date >= todayStr;
-    const dividerRow = showTodayDivider ? `<tr class="today-divider-row">
-      <td colspan="10" style="padding:0;border:none;background:transparent;">
-        <div style="display:flex;align-items:center;gap:10px;margin:10px 0;">
-          <div style="flex:1;height:2px;background:var(--warning);"></div>
-          <div style="font-size:11px;font-weight:700;color:var(--warning);white-space:nowrap;">🔽 오늘 (${formatDate(todayStr)}) — 지난 일정 / 향후 일정</div>
-          <div style="flex:1;height:2px;background:var(--warning);"></div>
-        </div>
-      </td>
-    </tr>` : '';
+  while (d <= endDate) {
+    const dateStr = dateToStr(d);
+    const monthKey = dateStr.slice(0,7);
+    const dow = d.getDay();
+    const isSun = dow === 0;
+    const isMonday = dow === 1;
 
-    const isPast = m.date < todayStr;
-    const isToday = m.date === todayStr;
-    const rowStyle = isToday ? 'background:#fffbeb;' : isPast ? 'color:var(--gray-400);' : '';
+    if (monthKey !== curMonth) {
+      curMonth = monthKey;
+      monthSeq = 0;
+      const [yy, mm] = monthKey.split('-');
+      html += `<tr>
+        <td colspan="10" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);">
+          📅 ${yy}년 ${parseInt(mm)}월 — 총 ${monthTotals[monthKey] || 0}건
+        </td>
+      </tr>`;
+    }
 
-    return dividerRow + `<tr style="${rowStyle}">
-      <td><span class="seq-badge">${i+1}</span></td>
-      <td style="font-weight:600;">${m.date.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
-      <td>${dowNames[dow]}</td>
-      <td>
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${company?.color||'#888'};margin-right:6px;"></span>
-        ${company?.name||'?'}
-      </td>
-      <td><span class="type-chip ${typeClass}">${m.typeId}</span></td>
-      <td style="text-align:center;">${m.hours}</td>
-      <td>
-        <span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--primary);cursor:pointer;"
-          onclick="navigator.clipboard.writeText('${folderName}').then(()=>{})" title="클릭하면 복사됩니다">
-          📁 ${folderName}
-        </span>
-      </td>
-      <td style="color:var(--gray-500);font-size:12px;word-break:break-word;white-space:normal;">${m.memo||''}</td>
-      <td>
-        <div style="display:flex;gap:4px;">
-          <button class="btn btn-outline btn-sm" onclick="showMeetingDetail('${m.id}')">수정</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteMeeting('${m.id}')">삭제</button>
-        </div>
-      </td>
-      <td>
-        <textarea class="meeting-note-input" rows="2" placeholder="메모"
-          onchange="updateMeetingNote('${m.id}', this.value)">${m.note||''}</textarea>
-      </td>
-    </tr>`;
-  }).join('');
+    // 주 단위 구분선: 월요일 시작 시 실선
+    const weekBorder = isMonday ? 'border-top:2px solid var(--gray-400);' : '';
+
+    const dayMeetings = meetingsByDate[dateStr] || [];
+    const isPast = dateStr < todayStr;
+    const isToday = dateStr === todayStr;
+    const todayBg = isToday ? 'background:#fffbeb;' : '';
+
+    if (dayMeetings.length === 0) {
+      const emptyBg = isSun ? 'background:#fff5f5;' : todayBg;
+      html += `<tr style="${weekBorder}${emptyBg}">
+        <td style="color:var(--gray-300);">-</td>
+        <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
+        <td style="color:${isSun ? '#dc2626' : 'var(--gray-400)'};">${dowNames[dow]}</td>
+        <td colspan="7" style="color:var(--gray-300);font-size:12px;">${isSun ? '(일요일)' : '—'}</td>
+      </tr>`;
+    } else {
+      dayMeetings.forEach((m, idx) => {
+        monthSeq++;
+        const company = state.companies.find(c => c.id === m.companyId);
+        const t = company ? getMeetingType(company, m.typeId) : null;
+        const typeClass = t?.isFace ? 'type-face' : m.typeId.includes('보고서') ? 'type-report' : 'type-research';
+        const folderName = getSuggestedFolderName(m);
+        const rowStyle = isToday ? 'background:#fffbeb;' : isPast ? 'color:var(--gray-400);' : '';
+        html += `<tr style="${idx === 0 ? weekBorder : ''}${rowStyle}">
+          <td><span class="seq-badge">${monthSeq}</span></td>
+          <td style="font-weight:600;">${dateStr.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
+          <td>${dowNames[dow]}</td>
+          <td>
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${company?.color||'#888'};margin-right:6px;"></span>
+            ${company?.name||'?'}
+          </td>
+          <td><span class="type-chip ${typeClass}">${m.typeId}</span></td>
+          <td style="text-align:center;">${m.hours}</td>
+          <td>
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--primary);cursor:pointer;"
+              onclick="navigator.clipboard.writeText('${folderName}').then(()=>{})" title="클릭하면 복사됩니다">
+              📁 ${folderName}
+            </span>
+          </td>
+          <td style="color:var(--gray-500);font-size:12px;word-break:break-word;white-space:normal;">${m.memo||''}</td>
+          <td>
+            <div style="display:flex;gap:4px;">
+              <button class="btn btn-outline btn-sm" onclick="showMeetingDetail('${m.id}')">수정</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteMeeting('${m.id}')">삭제</button>
+            </div>
+          </td>
+          <td>
+            <textarea class="meeting-note-input" rows="2" placeholder="메모"
+              onchange="updateMeetingNote('${m.id}', this.value)">${m.note||''}</textarea>
+          </td>
+        </tr>`;
+      });
+    }
+
+    d.setDate(d.getDate() + 1);
+  }
+
+  tbody.innerHTML = html;
 }
 
 // 미팅 목록의 개인 메모 저장 (업무수행내용과 별개의 자유메모 칸)
