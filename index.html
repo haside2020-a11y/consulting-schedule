@@ -894,12 +894,13 @@ function dateToStr(d) {
 }
 function strToDate(s) { return new Date(s + 'T00:00:00'); }
 // 컨설팅 유형별 수행기간 마감 계산
+const GOJO_PROGRAM_DEADLINE = '2026-10-16'; // 구조혁신컨설팅 전체 프로그램 완료 마감(연기 가능성 있음 — 자동으로 자르지 않고 초과 시 알림만 표시)
 function getConsultingDeadline(company) {
   if (company.consultingType === '일터혁신') {
     if (company.consultingStartDate) return addDays(company.consultingStartDate, 112); // 착수+15주+보정
     return addDays(company.assignDate, 105); // 착수일 미입력 시 fallback
   }
-  return addMonths(company.assignDate, 3); // 구조혁신 3개월
+  return addMonths(company.assignDate, 3); // 구조혁신 3개월 (프로그램 마감 10/16 초과 여부는 별도 알림으로 체크)
 }
 
 // 일터혁신 대면 비율 계산
@@ -1273,7 +1274,7 @@ function renderCompanyList() {
     container.innerHTML = '<div class="empty-state"><div class="empty-icon">🏢</div><p>등록된 업체가 없습니다.</p></div>';
     return;
   }
-  container.innerHTML = state.companies.map(c => {
+  function renderCard(c) {
     const deadlineEnd = getConsultingDeadline(c);
     const dDiff = daysDiff(today(), deadlineEnd);
     const deadlineClass = dDiff < 0 ? 'deadline-urgent' : dDiff <= 14 ? 'deadline-warning' : 'deadline-ok';
@@ -1368,7 +1369,29 @@ function renderCompanyList() {
       <div class="divider"></div>
       <div class="meeting-types-list">${typesHtml}</div>
     </div>`;
-  }).join('');
+  }
+
+  const gojoList = state.companies.filter(c => c.consultingType !== '일터혁신');
+  const ilteoList = state.companies.filter(c => c.consultingType === '일터혁신');
+
+  let html = '';
+  if (gojoList.length > 0) {
+    html += `<div style="grid-column:1/-1;display:flex;align-items:center;gap:8px;margin:4px 0 4px;padding-bottom:8px;border-bottom:2px solid #c7d2fe;">
+      <span style="font-size:16px;">🏗️</span>
+      <span style="font-weight:800;font-size:14px;color:#3730a3;">구조혁신컨설팅</span>
+      <span style="background:#e0e7ff;color:#3730a3;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:700;">${gojoList.length}개 업체</span>
+    </div>`;
+    html += gojoList.map(renderCard).join('');
+  }
+  if (ilteoList.length > 0) {
+    html += `<div style="grid-column:1/-1;display:flex;align-items:center;gap:8px;margin:16px 0 4px;padding-bottom:8px;border-bottom:2px solid #fde68a;">
+      <span style="font-size:16px;">🏢</span>
+      <span style="font-weight:800;font-size:14px;color:#92400e;">일터혁신컨설팅</span>
+      <span style="background:#fef9c3;color:#92400e;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:700;">${ilteoList.length}개 업체</span>
+    </div>`;
+    html += ilteoList.map(renderCard).join('');
+  }
+  container.innerHTML = html;
 }
 
 // ============================================================
@@ -1712,6 +1735,12 @@ function onModalTypeChange() {
     warnEl.textContent = (warnEl.textContent || '') + '\n⚠️ 이 날짜는 수행기간을 초과합니다.';
     warnEl.classList.add('show');
   }
+
+  // 구조혁신 전체 프로그램 마감(10/16) 초과 경고
+  if (company.consultingType !== '일터혁신' && pendingDate > GOJO_PROGRAM_DEADLINE) {
+    warnEl.textContent = (warnEl.textContent || '') + `\n🚨 구조혁신컨설팅 전체 프로그램 마감(${formatDate(GOJO_PROGRAM_DEADLINE)})을 초과합니다.`;
+    warnEl.classList.add('show');
+  }
 }
 
 function saveMeeting() {
@@ -1762,6 +1791,11 @@ function saveMeeting() {
   if (dateStr > deadlineEnd) {
     const label = company.consultingType === '일터혁신' ? '15주' : '3개월';
     if (!confirm(`배정확인일 기준 ${label}(${formatDate(deadlineEnd)})을 초과합니다.\n계속 등록하시겠습니까?`)) return;
+  }
+
+  // 구조혁신 전체 프로그램 마감(10/16) 초과 경고
+  if (company.consultingType !== '일터혁신' && dateStr > GOJO_PROGRAM_DEADLINE) {
+    if (!confirm(`🚨 구조혁신컨설팅 전체 프로그램 마감(${formatDate(GOJO_PROGRAM_DEADLINE)})을 초과하는 날짜입니다.\n계속 등록하시겠습니까?`)) return;
   }
 
   // Validate: Sunday
@@ -1879,6 +1913,11 @@ function updateMeeting() {
   const warn = checkConsecutiveNonFace(companyId, newDate, typeId, editingMeetingId);
   if (warn) {
     if (!confirm(warn + '\n\n계속 저장하시겠습니까?')) return;
+  }
+
+  // 구조혁신 전체 프로그램 마감(10/16) 초과 경고
+  if (editComp?.consultingType !== '일터혁신' && newDate > GOJO_PROGRAM_DEADLINE) {
+    if (!confirm(`🚨 구조혁신컨설팅 전체 프로그램 마감(${formatDate(GOJO_PROGRAM_DEADLINE)})을 초과하는 날짜입니다.\n계속 저장하시겠습니까?`)) return;
   }
 
   m.date = newDate;
