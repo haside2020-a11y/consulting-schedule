@@ -434,13 +434,13 @@ async function dbSave(key, val) {
       <div style="overflow-x:auto;">
         <table class="meeting-table" style="table-layout:fixed;">
           <colgroup>
-            <col style="width:6%;"><col style="width:11%;"><col style="width:6%;">
-            <col style="width:16%;"><col style="width:16%;">
-            <col style="width:20%;"><col style="width:12%;"><col style="width:13%;">
+            <col style="width:6%;"><col style="width:10%;"><col style="width:5%;">
+            <col style="width:15%;"><col style="width:14%;"><col style="width:7%;">
+            <col style="width:18%;"><col style="width:12%;"><col style="width:13%;">
           </colgroup>
           <thead>
             <tr>
-              <th>월순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th>
+              <th>월순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th><th>회차</th>
               <th>업무수행내용</th><th>관리</th><th>메모</th>
             </tr>
           </thead>
@@ -2264,6 +2264,21 @@ function renderMeetingList(scrollToToday) {
   }
   emptyEl.style.display = 'none';
 
+  // 업체별 회차(전체 미팅 중 몇 번째) 및 총 의무 회차 계산 - 필터와 무관하게 해당 업체의 전체 미팅 기준
+  const seqByMeetingId = {};
+  const totalByCompanyId = {};
+  state.companies.forEach(c => {
+    totalByCompanyId[c.id] = (c.meetingTypes || []).reduce((s,t) => s + t.target, 0);
+  });
+  const meetingsByCompanyAll = {};
+  state.meetings.forEach(m => {
+    (meetingsByCompanyAll[m.companyId] = meetingsByCompanyAll[m.companyId] || []).push(m);
+  });
+  Object.keys(meetingsByCompanyAll).forEach(cid => {
+    const sorted = [...meetingsByCompanyAll[cid]].sort((a,b) => a.date.localeCompare(b.date));
+    sorted.forEach((m, idx) => { seqByMeetingId[m.id] = idx + 1; });
+  });
+
   // ── 표시할 날짜 범위 결정: 월 필터가 있으면 그 달 전체, 없으면 등록된 전체 미팅의 최소~최대 달 전체 ──
   let rangeStart, rangeEnd;
   if (monthFilter) {
@@ -2330,7 +2345,7 @@ function renderMeetingList(scrollToToday) {
         <td style="color:var(--gray-300);">-</td>
         <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
         <td style="color:${isSun ? '#dc2626' : 'var(--gray-400)'};">${dowNames[dow]}</td>
-        <td colspan="5" style="color:var(--gray-300);font-size:12px;">${isSun ? '(일요일)' : '—'}</td>
+        <td colspan="6" style="color:var(--gray-300);font-size:12px;">${isSun ? '(일요일)' : '—'}</td>
       </tr>`;
     } else {
       dayMeetings.forEach((m, idx) => {
@@ -2339,6 +2354,8 @@ function renderMeetingList(scrollToToday) {
         const t = company ? getMeetingType(company, m.typeId) : null;
         const typeClass = t?.isFace ? 'type-face' : m.typeId.includes('보고서') ? 'type-report' : 'type-research';
         const rowStyle = isToday ? 'background:#fffbeb;' : isPast ? 'color:var(--gray-400);' : '';
+        const seqNum = seqByMeetingId[m.id] || '?';
+        const seqTotal = totalByCompanyId[m.companyId] || '?';
         html += `<tr${isToday && idx === 0 ? ' id="today-row"' : ''} style="${idx === 0 ? weekBorder : ''}${rowStyle}">
           <td><span class="seq-badge">${monthSeq}</span></td>
           <td style="font-weight:600;">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
@@ -2348,6 +2365,7 @@ function renderMeetingList(scrollToToday) {
             ${company?.name||'?'}
           </td>
           <td><span class="type-chip ${typeClass}">${m.typeId}</span></td>
+          <td style="text-align:center;font-weight:700;color:var(--primary);">${seqNum}/${seqTotal}</td>
           <td style="color:var(--gray-500);font-size:12px;word-break:break-word;white-space:normal;">${m.memo||''}</td>
           <td>
             <div style="display:flex;gap:4px;">
