@@ -487,9 +487,13 @@ async function dbSave(key, val) {
         <div id="new-company-ilteo-section" style="display:none;">
           <div style="background:#fef9c3;border:1.5px solid #fde047;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
             <div style="font-size:12px;font-weight:700;color:#854d0e;margin-bottom:8px;">🏢 일터혁신 추가 정보</div>
-            <div class="form-group" style="margin-bottom:0;">
+            <div class="form-group">
               <label class="form-label">컨설팅 실착수일 <span style="font-size:11px;font-weight:400;color:var(--gray-500);">PDF 일정표 기준 입력</span></label>
               <input class="form-input" type="date" id="new-company-consulting-start">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">착수→종료 수행기간(일) <span style="font-size:11px;font-weight:400;color:var(--gray-500);">차수별 공식 일정표 기준, 기본 112일</span></label>
+              <input class="form-input" type="number" id="new-company-consulting-duration" value="112" min="1">
             </div>
           </div>
         </div>
@@ -783,9 +787,13 @@ async function dbSave(key, val) {
     <div id="edit-company-ilteo-section" style="display:none;">
       <div style="background:#fef9c3;border:1.5px solid #fde047;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
         <div style="font-size:12px;font-weight:700;color:#854d0e;margin-bottom:8px;">🏢 일터혁신 추가 정보</div>
-        <div class="form-group" style="margin-bottom:0;">
+        <div class="form-group">
           <label class="form-label">컨설팅 실착수일 <span style="font-size:11px;font-weight:400;color:var(--gray-500);">PDF 일정표 기준</span></label>
           <input class="form-input" type="date" id="edit-company-consulting-start">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">착수→종료 수행기간(일) <span style="font-size:11px;font-weight:400;color:var(--gray-500);">차수별 공식 일정표 기준, 기본 112일</span></label>
+          <input class="form-input" type="number" id="edit-company-consulting-duration" value="112" min="1">
         </div>
       </div>
     </div>
@@ -897,7 +905,7 @@ function strToDate(s) { return new Date(s + 'T00:00:00'); }
 const GOJO_PROGRAM_DEADLINE = '2026-10-16'; // 구조혁신컨설팅 전체 프로그램 완료 마감(연기 가능성 있음 — 자동으로 자르지 않고 초과 시 알림만 표시)
 function getConsultingDeadline(company) {
   if (company.consultingType === '일터혁신') {
-    if (company.consultingStartDate) return addDays(company.consultingStartDate, 112); // 착수+15주+보정
+    if (company.consultingStartDate) return addDays(company.consultingStartDate, company.consultingDurationDays || 112); // 착수+수행기간(차수별로 다름, 기본 112일)
     return addDays(company.assignDate, 105); // 착수일 미입력 시 fallback
   }
   return addMonths(company.assignDate, 3); // 구조혁신 3개월 (프로그램 마감 10/16 초과 여부는 별도 알림으로 체크)
@@ -954,9 +962,10 @@ function getIlteoDeadlines(company) {
   const planDoc      = addDays(diagEnd, 2);                   // 수행계획서
   const selfReview   = addBusinessDays(planDoc, 5);           // 자체심사
   // 컨설팅 착수일 기반
+  const durationDays = company.consultingDurationDays || 112; // 착수→종료 수행기간(차수별 공식 일정표 기준, 기본 112일)
   const midReport    = cs ? addDays(cs, 36)          : null; // 중간보고
   const midReportDoc = cs ? addDays(cs, 43)          : null; // 중간보고서 (+7)
-  const consultEnd   = cs ? addDays(cs, 112)         : null; // 컨설팅 종료 (15주+보정)
+  const consultEnd   = cs ? addDays(cs, durationDays): null; // 컨설팅 종료
   const finalReport  = cs ? addDays(consultEnd, 7)   : null; // 최종보고서
   const followUp     = cs ? addMonths(consultEnd, 3) : null; // 이행지원
   return { diagEnd, planDoc, selfReview, midReport, midReportDoc, consultEnd, finalReport, followUp };
@@ -988,7 +997,7 @@ function switchTab(tab) {
 
   if (tab === 'calendar') renderCalendar();
   if (tab === 'dashboard') renderDashboard();
-  if (tab === 'meetings') renderMeetingList();
+  if (tab === 'meetings') renderMeetingList(true);
   if (tab === 'companies') renderCompanyList();
   if (tab === 'photo') { refreshPhotoFilters(); renderFolderNameList(); }
 }
@@ -1158,6 +1167,9 @@ function addCompany() {
   const consultingStartDate = consultingType === '일터혁신'
     ? (document.getElementById('new-company-consulting-start').value || null)
     : null;
+  const consultingDurationDays = consultingType === '일터혁신'
+    ? (parseInt(document.getElementById('new-company-consulting-duration').value) || 112)
+    : null;
   const company = {
     id: Date.now().toString(),
     name,
@@ -1165,6 +1177,7 @@ function addCompany() {
     manager,
     consultingType,
     consultingStartDate,
+    consultingDurationDays,
     meetingTypes,
     color: getCompanyColor(state.companies.length),
     createdAt: today()
@@ -1213,7 +1226,10 @@ function openEditCompany(id) {
   if (gojoSec) gojoSec.style.display = isIlteo ? 'none' : 'block';
   const editDateLabel = document.getElementById('edit-company-date-label');
   if (editDateLabel) editDateLabel.textContent = isIlteo ? '진단컨설팅 착수일(진단개시일) *' : '배정확인일 *';
-  if (isIlteo) document.getElementById('edit-company-consulting-start').value = c.consultingStartDate || '';
+  if (isIlteo) {
+    document.getElementById('edit-company-consulting-start').value = c.consultingStartDate || '';
+    document.getElementById('edit-company-consulting-duration').value = c.consultingDurationDays || 112;
+  }
   document.getElementById('edit-company-final-md').value = c.finalMdDate || '';
   document.getElementById('modal-edit-company').classList.add('open');
 }
@@ -1258,8 +1274,10 @@ function saveEditCompany() {
   }
   if (newType === '일터혁신') {
     c.consultingStartDate = document.getElementById('edit-company-consulting-start').value || null;
+    c.consultingDurationDays = parseInt(document.getElementById('edit-company-consulting-duration').value) || 112;
   } else {
     c.finalMdDate = document.getElementById('edit-company-final-md').value || null;
+    c.consultingDurationDays = null;
   }
   saveState();
   closeModal('modal-edit-company');
@@ -2216,7 +2234,7 @@ function renderDashboard() {
 // ============================================================
 // 미팅 목록
 // ============================================================
-function renderMeetingList() {
+function renderMeetingList(scrollToToday) {
   const companyFilter = document.getElementById('filter-company').value;
   const typeFilter = document.getElementById('filter-type').value;
   const monthFilter = document.getElementById('filter-month').value;
@@ -2304,11 +2322,13 @@ function renderMeetingList() {
     const isToday = dateStr === todayStr;
     const todayBg = isToday ? 'background:#fffbeb;' : '';
 
+    const todayBadge = ' <span style="display:inline-block;font-size:12px;font-weight:800;color:#fff;background:var(--warning, #f59e0b);padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle;">오늘</span>';
+
     if (dayMeetings.length === 0) {
       const emptyBg = isSun ? 'background:#fff5f5;' : todayBg;
-      html += `<tr style="${weekBorder}${emptyBg}">
+      html += `<tr${isToday ? ' id="today-row"' : ''} style="${weekBorder}${emptyBg}">
         <td style="color:var(--gray-300);">-</td>
-        <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
+        <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
         <td style="color:${isSun ? '#dc2626' : 'var(--gray-400)'};">${dowNames[dow]}</td>
         <td colspan="7" style="color:var(--gray-300);font-size:12px;">${isSun ? '(일요일)' : '—'}</td>
       </tr>`;
@@ -2320,9 +2340,9 @@ function renderMeetingList() {
         const typeClass = t?.isFace ? 'type-face' : m.typeId.includes('보고서') ? 'type-report' : 'type-research';
         const folderName = getSuggestedFolderName(m);
         const rowStyle = isToday ? 'background:#fffbeb;' : isPast ? 'color:var(--gray-400);' : '';
-        html += `<tr style="${idx === 0 ? weekBorder : ''}${rowStyle}">
+        html += `<tr${isToday && idx === 0 ? ' id="today-row"' : ''} style="${idx === 0 ? weekBorder : ''}${rowStyle}">
           <td><span class="seq-badge">${monthSeq}</span></td>
-          <td style="font-weight:600;">${dateStr.replace(/-/g,'.')}${isToday ? ' <span style="font-size:10px;font-weight:700;color:var(--warning);">오늘</span>' : ''}</td>
+          <td style="font-weight:600;">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
           <td>${dowNames[dow]}</td>
           <td>
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${company?.color||'#888'};margin-right:6px;"></span>
@@ -2355,6 +2375,13 @@ function renderMeetingList() {
   }
 
   tbody.innerHTML = html;
+
+  if (scrollToToday) {
+    setTimeout(() => {
+      const row = document.getElementById('today-row');
+      if (row) row.scrollIntoView({ block: 'center' });
+    }, 0);
+  }
 }
 
 // 미팅 목록의 개인 메모 저장 (업무수행내용과 별개의 자유메모 칸)
