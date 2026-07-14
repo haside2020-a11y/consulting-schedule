@@ -434,14 +434,14 @@ async function dbSave(key, val) {
       <div style="overflow-x:auto;">
         <table class="meeting-table" style="table-layout:fixed;">
           <colgroup>
-            <col style="width:6%;"><col style="width:10%;"><col style="width:5%;">
-            <col style="width:15%;"><col style="width:14%;"><col style="width:7%;">
-            <col style="width:18%;"><col style="width:12%;"><col style="width:13%;">
+            <col style="width:5%;"><col style="width:9%;"><col style="width:4%;">
+            <col style="width:13%;"><col style="width:12%;"><col style="width:6%;">
+            <col style="width:16%;"><col style="width:10%;"><col style="width:11%;"><col style="width:14%;">
           </colgroup>
           <thead>
             <tr>
               <th>월순번</th><th>날짜</th><th>요일</th><th>업체명</th><th>미팅유형</th><th>회차</th>
-              <th>업무수행내용</th><th>관리</th><th>메모</th>
+              <th>업무수행내용</th><th>관리</th><th>메모</th><th>주요일정</th>
             </tr>
           </thead>
           <tbody id="meeting-tbody"></tbody>
@@ -911,6 +911,15 @@ function getConsultingDeadline(company) {
   return addMonths(company.assignDate, 3); // 구조혁신 3개월 (프로그램 마감 10/16 초과 여부는 별도 알림으로 체크)
 }
 
+// 구조혁신 최종MD(결과보고회) 날짜: 수동 입력값(finalMdDate)이 있으면 그걸 우선하고,
+// 없으면 이미 등록된 미팅 중 가장 늦은 날짜(=15회차 최종결과보고회)를 자동으로 사용
+function getFinalMdDate(company) {
+  if (company.finalMdDate) return company.finalMdDate;
+  const meetings = state.meetings.filter(m => m.companyId === company.id);
+  if (meetings.length === 0) return null;
+  return meetings.reduce((max, m) => (m.date > max ? m.date : max), meetings[0].date);
+}
+
 // 일터혁신 대면 비율 계산
 function getFaceRatio(companyId) {
   const meetings = state.meetings.filter(m => m.companyId === companyId);
@@ -1371,13 +1380,13 @@ function renderCompanyList() {
           <span class="deadline-label">⏰ 컨설팅 종료 기한</span>
           <span class="deadline-value ${deadlineClass}">${formatDate(deadlineEnd)}</span>
         </div>
-        ${c.finalMdDate ? `<div class="deadline-item">
-          <span class="deadline-label">📋 최종결과보고서 제출 기한 (최종MD 2주 전)</span>
-          <span class="deadline-value ${daysDiff(today(), addDays(c.finalMdDate,-14)) < 0 ? 'deadline-urgent' : ''}">${formatDate(addDays(c.finalMdDate,-14))} <span style="font-size:10px;color:var(--gray-400);">→ 최종MD: ${formatDate(c.finalMdDate)}</span></span>
+        ${(() => { const finalMd = getFinalMdDate(c); return finalMd ? `<div class="deadline-item">
+          <span class="deadline-label">📋 최종결과보고서 제출 기한 (최종MD 2주 전)${!c.finalMdDate ? ' <span style="font-size:10px;font-weight:400;color:var(--gray-400);">(등록된 마지막 미팅일 기준 자동계산)</span>' : ''}</span>
+          <span class="deadline-value ${daysDiff(today(), addDays(finalMd,-14)) < 0 ? 'deadline-urgent' : ''}">${formatDate(addDays(finalMd,-14))} <span style="font-size:10px;color:var(--gray-400);">→ 최종MD: ${formatDate(finalMd)}</span></span>
         </div>` : `<div class="deadline-item">
           <span class="deadline-label">📋 최종결과보고서 기한</span>
-          <span style="font-size:11px;color:var(--gray-400);">업체 수정에서 최종MD 예정일 입력 시 자동계산</span>
-        </div>`}
+          <span style="font-size:11px;color:var(--gray-400);">미팅을 등록하면 자동계산됩니다(또는 업체 수정에서 최종MD 예정일 직접 입력)</span>
+        </div>` })()}
         <div class="deadline-item">
           <span class="deadline-label">📁 완료보고서 작성 기한 (종료 후 5일 이내)</span>
           <span class="deadline-value">${formatDate(addDays(deadlineEnd, 4))}</span>
@@ -1467,16 +1476,8 @@ function changeMonth(delta) {
   renderCalendar();
 }
 
-function renderCalendar() {
-  const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
-  document.getElementById('cal-title').textContent = `${calYear}년 ${monthNames[calMonth]}`;
-
-  const firstDay = new Date(calYear, calMonth, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
-  const daysInPrevMonth = new Date(calYear, calMonth, 0).getDate();
-  const todayStr = today();
-
-  // 마감일 맵 구성: dateStr -> [{label, cls, companyName, done}]
+// 전 업체 마감일 맵 구성: dateStr -> [{label, cls, done}] — 캘린더와 미팅목록("주요일정" 열)에서 공용으로 사용
+function buildDeadlineMap() {
   const deadlineMap = {};
   state.companies.forEach(c => {
     const d7  = addDays(c.assignDate, 6);  // 배정일 포함 7일
@@ -1503,8 +1504,9 @@ function renderCalendar() {
       addDL(d3m, '종료기한', 'cal-dl-end', false);
       // 완료보고서: 종료기한+4 (배정일포함 5일 이내)
       addDL(addDays(d3m, 4), '완료보고서기한', 'cal-dl-complrpt', false);
-      // 최종결과보고서: 최종MD 2주 전
-      if (c.finalMdDate) addDL(addDays(c.finalMdDate, -14), '결과보고서기한', 'cal-dl-finalrpt-gj', false);
+      // 최종결과보고서: 최종MD 2주 전 (수동입력 없으면 등록된 마지막 미팅일로 자동계산)
+      const finalMdCal = getFinalMdDate(c);
+      if (finalMdCal) addDL(addDays(finalMdCal, -14), '결과보고서기한', 'cal-dl-finalrpt-gj', false);
     }
   });
   // 수행일지 3일 기한: 현장방문(대면) 미팅마다
@@ -1518,6 +1520,18 @@ function renderCalendar() {
       deadlineMap[diaryDL].push({ label: `${shortName} 수행일지`, cls: 'cal-dl-diary', done: false });
     }
   });
+  return deadlineMap;
+}
+
+function renderCalendar() {
+  const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+  document.getElementById('cal-title').textContent = `${calYear}년 ${monthNames[calMonth]}`;
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+  const daysInPrevMonth = new Date(calYear, calMonth, 0).getDate();
+  const todayStr = today();
+  const deadlineMap = buildDeadlineMap();
 
   let cells = '';
   // 이전 달
@@ -2089,12 +2103,13 @@ function renderDashboard() {
       alerts.push({ company: c.name, msg: `⛔ 컨설팅 기한 초과: ${formatDate(deadlineEnd)}`, dDiff, color: c.color, expired: true });
     }
     if (c.consultingType !== '일터혁신') {
-      // 최종결과보고서 기한 알림
-      if (c.finalMdDate) {
-        const finalRptDL = addDays(c.finalMdDate, -14);
+      // 최종결과보고서 기한 알림 (수동입력 없으면 등록된 마지막 미팅일로 자동계산)
+      const finalMdAlert = getFinalMdDate(c);
+      if (finalMdAlert) {
+        const finalRptDL = addDays(finalMdAlert, -14);
         const finalRptDiff = daysDiff(today(), finalRptDL);
         if (finalRptDiff >= 0 && finalRptDiff <= 21) {
-          alerts.push({ company: c.name, msg: `📋 최종결과보고서 제출 기한: ${formatDate(finalRptDL)} (최종MD: ${formatDate(c.finalMdDate)})`, dDiff: finalRptDiff, color: c.color });
+          alerts.push({ company: c.name, msg: `📋 최종결과보고서 제출 기한: ${formatDate(finalRptDL)} (최종MD: ${formatDate(finalMdAlert)})`, dDiff: finalRptDiff, color: c.color });
         }
         if (finalRptDiff < 0) {
           alerts.push({ company: c.name, msg: `⛔ 최종결과보고서 기한 초과: ${formatDate(finalRptDL)}`, dDiff: finalRptDiff, color: c.color, expired: true });
@@ -2264,6 +2279,14 @@ function renderMeetingList(scrollToToday) {
   }
   emptyEl.style.display = 'none';
 
+  // 주요일정(마감일 등) 맵 - 날짜별로 조회
+  const deadlineMap = buildDeadlineMap();
+  const milestoneHtml = (dateStr) => {
+    const items = deadlineMap[dateStr];
+    if (!items || items.length === 0) return '';
+    return items.map(it => `<div style="font-size:11px;font-weight:700;${it.done ? 'color:var(--gray-400);text-decoration:line-through;' : 'color:var(--danger);'}">📌 ${it.label}</div>`).join('');
+  };
+
   // 업체별 회차(전체 미팅 중 몇 번째) 및 총 의무 회차 계산 - 필터와 무관하게 해당 업체의 전체 미팅 기준
   const seqByMeetingId = {};
   const totalByCompanyId = {};
@@ -2327,7 +2350,7 @@ function renderMeetingList(scrollToToday) {
       curMonthCollapsed = monthKey < todayMonthKey; // 지난달은 기본 접힘
       const [yy, mm] = monthKey.split('-');
       html += `<tr>
-        <td colspan="9" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);cursor:pointer;" onclick="toggleMonthGroup('${monthKey}')">
+        <td colspan="10" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);cursor:pointer;" onclick="toggleMonthGroup('${monthKey}')">
           <span id="month-arrow-${monthKey}">${curMonthCollapsed ? '▶' : '▼'}</span>
           📅 ${yy}년 ${parseInt(mm)}월 — 총 ${monthTotals[monthKey] || 0}건
           ${curMonthCollapsed ? '<span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:8px;">(지난달 · 클릭해서 펼치기)</span>' : ''}
@@ -2347,11 +2370,13 @@ function renderMeetingList(scrollToToday) {
 
     if (dayMeetings.length === 0) {
       const emptyBg = isSun ? 'background:#fff5f5;' : todayBg;
+      const dayMilestones = milestoneHtml(dateStr);
       html += `<tr class="month-group-${monthKey}"${isToday ? ' id="today-row"' : ''} style="${curMonthCollapsed ? 'display:none;' : ''}${weekBorder}${emptyBg}">
         <td style="color:var(--gray-300);">-</td>
         <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
         <td style="color:${isSun ? '#dc2626' : 'var(--gray-400)'};">${dowNames[dow]}</td>
         <td colspan="6" style="color:var(--gray-300);font-size:12px;">${isSun ? '(일요일)' : '—'}</td>
+        <td>${dayMilestones}</td>
       </tr>`;
     } else {
       const dayCount = dayMeetings.length;
@@ -2366,6 +2391,9 @@ function renderMeetingList(scrollToToday) {
         const dateCell = idx === 0
           ? `<td${dayCount > 1 ? ` rowspan="${dayCount}"` : ''} style="font-weight:600;border-right:1px solid var(--gray-200);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
           <td${dayCount > 1 ? ` rowspan="${dayCount}"` : ''}>${dowNames[dow]}</td>`
+          : '';
+        const milestoneCell = idx === 0
+          ? `<td${dayCount > 1 ? ` rowspan="${dayCount}"` : ''}>${milestoneHtml(dateStr)}</td>`
           : '';
         html += `<tr class="month-group-${monthKey}"${isToday && idx === 0 ? ' id="today-row"' : ''} style="${curMonthCollapsed ? 'display:none;' : ''}${idx === 0 ? weekBorder : ''}${rowStyle}">
           <td><span class="seq-badge">${monthSeq}</span></td>
@@ -2387,6 +2415,7 @@ function renderMeetingList(scrollToToday) {
             <textarea class="meeting-note-input" rows="2" placeholder="메모"
               onchange="updateMeetingNote('${m.id}', this.value)">${m.note||''}</textarea>
           </td>
+          ${milestoneCell}
         </tr>`;
       });
     }
