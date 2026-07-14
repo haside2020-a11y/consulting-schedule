@@ -2404,6 +2404,16 @@ function renderMeetingList(scrollToToday) {
   }
 }
 
+// 지난달 접기/펼치기 토글
+function toggleMonthGroup(monthKey) {
+  const rows = document.querySelectorAll('.month-group-' + monthKey);
+  const arrow = document.getElementById('month-arrow-' + monthKey);
+  if (!rows.length) return;
+  const isHidden = rows[0].style.display === 'none';
+  rows.forEach(r => { r.style.display = isHidden ? '' : 'none'; });
+  if (arrow) arrow.textContent = isHidden ? '▼' : '▶';
+}
+
 // 미팅 목록의 개인 메모 저장 (업무수행내용과 별개의 자유메모 칸)
 function updateMeetingNote(meetingId, value) {
   const m = state.meetings.find(mm => mm.id === meetingId);
