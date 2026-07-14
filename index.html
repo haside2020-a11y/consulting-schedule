@@ -2327,7 +2327,7 @@ function renderMeetingList(scrollToToday) {
       curMonthCollapsed = monthKey < todayMonthKey; // 지난달은 기본 접힘
       const [yy, mm] = monthKey.split('-');
       html += `<tr>
-        <td colspan="10" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);cursor:pointer;" onclick="toggleMonthGroup('${monthKey}')">
+        <td colspan="9" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);cursor:pointer;" onclick="toggleMonthGroup('${monthKey}')">
           <span id="month-arrow-${monthKey}">${curMonthCollapsed ? '▶' : '▼'}</span>
           📅 ${yy}년 ${parseInt(mm)}월 — 총 ${monthTotals[monthKey] || 0}건
           ${curMonthCollapsed ? '<span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:8px;">(지난달 · 클릭해서 펼치기)</span>' : ''}
