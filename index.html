@@ -2257,7 +2257,7 @@ function renderMeetingList(scrollToToday) {
   const tbody = document.getElementById('meeting-tbody');
   const emptyEl = document.getElementById('meeting-list-empty');
 
-  if (state.meetings.length === 0) {
+  if (state.meetings.length === 0 || meetings.length === 0) {
     tbody.innerHTML = '';
     emptyEl.style.display = 'block';
     return;
@@ -2286,7 +2286,8 @@ function renderMeetingList(scrollToToday) {
     rangeStart = `${monthFilter}-01`;
     rangeEnd = `${monthFilter}-${String(new Date(ry, rm, 0).getDate()).padStart(2,'0')}`;
   } else {
-    const allDates = state.meetings.map(m => m.date).sort();
+    // 회사/유형 필터가 걸려 있으면 그 필터에 실제로 매칭되는 미팅들의 범위만 사용 (완전히 빈 달은 표시 안 함)
+    const allDates = meetings.map(m => m.date).sort();
     const minD = strToDate(allDates[0]);
     const maxD = strToDate(allDates[allDates.length - 1]);
     rangeStart = `${minD.getFullYear()}-${String(minD.getMonth()+1).padStart(2,'0')}-01`;
@@ -2308,6 +2309,8 @@ function renderMeetingList(scrollToToday) {
   let html = '';
   let curMonth = null;
   let monthSeq = 0;
+  let curMonthCollapsed = false;
+  const todayMonthKey = todayStr.slice(0,7);
   const d = strToDate(rangeStart);
   const endDate = strToDate(rangeEnd);
 
@@ -2321,10 +2324,13 @@ function renderMeetingList(scrollToToday) {
     if (monthKey !== curMonth) {
       curMonth = monthKey;
       monthSeq = 0;
+      curMonthCollapsed = monthKey < todayMonthKey; // 지난달은 기본 접힘
       const [yy, mm] = monthKey.split('-');
       html += `<tr>
-        <td colspan="10" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);">
+        <td colspan="10" style="background:var(--gray-100);font-weight:800;font-size:13px;padding:10px 12px;border-top:3px solid var(--gray-500);cursor:pointer;" onclick="toggleMonthGroup('${monthKey}')">
+          <span id="month-arrow-${monthKey}">${curMonthCollapsed ? '▶' : '▼'}</span>
           📅 ${yy}년 ${parseInt(mm)}월 — 총 ${monthTotals[monthKey] || 0}건
+          ${curMonthCollapsed ? '<span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:8px;">(지난달 · 클릭해서 펼치기)</span>' : ''}
         </td>
       </tr>`;
     }
@@ -2341,7 +2347,7 @@ function renderMeetingList(scrollToToday) {
 
     if (dayMeetings.length === 0) {
       const emptyBg = isSun ? 'background:#fff5f5;' : todayBg;
-      html += `<tr${isToday ? ' id="today-row"' : ''} style="${weekBorder}${emptyBg}">
+      html += `<tr class="month-group-${monthKey}"${isToday ? ' id="today-row"' : ''} style="${curMonthCollapsed ? 'display:none;' : ''}${weekBorder}${emptyBg}">
         <td style="color:var(--gray-300);">-</td>
         <td style="color:var(--gray-400);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
         <td style="color:${isSun ? '#dc2626' : 'var(--gray-400)'};">${dowNames[dow]}</td>
@@ -2361,7 +2367,7 @@ function renderMeetingList(scrollToToday) {
           ? `<td${dayCount > 1 ? ` rowspan="${dayCount}"` : ''} style="font-weight:600;border-right:1px solid var(--gray-200);">${dateStr.replace(/-/g,'.')}${isToday ? todayBadge : ''}</td>
           <td${dayCount > 1 ? ` rowspan="${dayCount}"` : ''}>${dowNames[dow]}</td>`
           : '';
-        html += `<tr${isToday && idx === 0 ? ' id="today-row"' : ''} style="${idx === 0 ? weekBorder : ''}${rowStyle}">
+        html += `<tr class="month-group-${monthKey}"${isToday && idx === 0 ? ' id="today-row"' : ''} style="${curMonthCollapsed ? 'display:none;' : ''}${idx === 0 ? weekBorder : ''}${rowStyle}">
           <td><span class="seq-badge">${monthSeq}</span></td>
           ${dateCell}
           <td>
