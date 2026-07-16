@@ -579,13 +579,12 @@ async function dbSave(key, val) {
         <select class="filter-select" id="photo-filter-company">
           <option value="">전체 업체</option>
         </select>
-        <button class="btn btn-primary" onclick="scanFolderAPI()" id="btn-scan-folder">
-          📂 사진촬영 폴더 선택 (권장)
+        <button class="btn btn-primary" onclick="scanFolderAPI('single')" id="btn-scan-folder">
+          📂 사진촬영 폴더 선택 (특정 회사)
         </button>
-        <label class="btn btn-outline" style="cursor:pointer;">
-          🖼️ 사진 파일 직접 선택
-          <input type="file" multiple accept="image/*" style="display:none;" onchange="handlePhotoFiles(this.files)">
-        </label>
+        <button class="btn btn-outline" onclick="scanFolderAPI('company')" id="btn-scan-company">
+          🏢 회사별 크로스체크 (상위 폴더)
+        </button>
         <button class="btn btn-gray" onclick="clearPhotoResults()">초기화</button>
       </div>
       <div id="folder-api-note" style="font-size:11px;color:var(--gray-500);margin-bottom:8px;display:none;"></div>
@@ -2684,23 +2683,26 @@ function readExifDate(file) {
 }
 
 // -------- 폴더 API 방식 (Chrome/Edge) --------
-async function scanFolderAPI() {
+async function scanFolderAPI(mode) {
+  mode = mode || 'single';
   if (!window.showDirectoryPicker) {
     document.getElementById('folder-api-note').style.display = 'block';
-    document.getElementById('folder-api-note').textContent = '⚠️ 이 브라우저는 폴더 직접 선택을 지원하지 않습니다. 아래 "사진 파일 직접 선택"을 사용하세요. (Chrome/Edge 권장)';
+    document.getElementById('folder-api-note').textContent = '⚠️ 이 브라우저는 폴더 직접 선택을 지원하지 않습니다. Chrome/Edge를 사용해주세요.';
     return;
   }
   try {
     const dirHandle = await window.showDirectoryPicker();
     document.getElementById('folder-api-note').style.display = 'block';
-    document.getElementById('folder-api-note').textContent = `📂 선택된 폴더: ${dirHandle.name} — 분석 중...`;
-    await checkFolderStructure(dirHandle);
+    const modeLabel = mode === 'company' ? '🏢 회사별 크로스체크' : '📂 단일 회사 검증';
+    document.getElementById('folder-api-note').textContent = `${modeLabel} — 선택된 폴더: ${dirHandle.name} — 분석 중...`;
+    await checkFolderStructure(dirHandle, mode);
   } catch(e) {
     if (e.name !== 'AbortError') alert('폴더 읽기 오류: ' + e.message);
   }
 }
 
-async function checkFolderStructure(dirHandle) {
+async function checkFolderStructure(dirHandle, mode) {
+  mode = mode || 'single';
   const companyFilter = document.getElementById('photo-filter-company').value;
 
   // 미팅 날짜 맵 구성 (대면 포함 전체 — 폴더는 비대면도 있음)
@@ -2716,13 +2718,23 @@ async function checkFolderStructure(dirHandle) {
   allMeetings.forEach(m => { suggestedByDate[m.date] = getSuggestedFolderName(m); });
 
   // 스캔한 날짜 폴더 목록
+  // 실제 구조가 "회사별 폴더 > 20.사진촬영 > 날짜별 폴더" 처럼 여러 단계로 되어 있을 수 있으므로,
+  // 선택한 폴더부터 하위 폴더를 재귀적으로 훑으면서 날짜를 추출할 수 있는 폴더를 전부 찾는다.
+  // (날짜 폴더를 찾으면 그 안까지는 더 들어가지 않고 사진이 들어있는 폴더로 확정한다)
   const scannedFolders = [];
-  for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind !== 'directory') continue;
-    const folderDate = extractDateFromFilename(name);
-    if (!folderDate) continue;
-    scannedFolders.push({ name, handle, folderDate });
+  async function collectDateFolders(handle, depth) {
+    if (depth > 6) return; // 과도한 재귀 방지
+    for await (const [name, childHandle] of handle.entries()) {
+      if (childHandle.kind !== 'directory') continue;
+      const folderDate = extractDateFromFilename(name);
+      if (folderDate) {
+        scannedFolders.push({ name, handle: childHandle, folderDate });
+      } else {
+        await collectDateFolders(childHandle, depth + 1);
+      }
+    }
   }
+  await collectDateFolders(dirHandle, 0);
   scannedFolders.sort((a,b)=>naturalFolderCompare(a.name,b.name));
 
   const scannedDates = new Set(scannedFolders.map(f => f.folderDate));
@@ -2835,7 +2847,7 @@ async function checkFolderStructure(dirHandle) {
         <div style="flex:1;">
           <div style="font-weight:700;font-size:13px;font-family:monospace;">📁 ${folder.name}</div>
           <div style="font-size:11px;color:var(--gray-600);margin-top:2px;display:flex;align-items:center;gap:6px;">
-            ${meeting ? `미팅: ${meeting.typeId} · ${formatDate(folder.folderDate)}` : `⚠️ 미등록 날짜`}
+            ${meeting ? `${meetingCompany?.name||'?'} · 미팅: ${meeting.typeId} · ${formatDate(folder.folderDate)}` : `⚠️ 미등록 날짜`}
             ${isIlteo ? '<span style="background:#fef9c3;color:#854d0e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;">일터혁신</span>' : '<span style="background:#e0e7ff;color:#3730a3;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;">구조혁신</span>'}
           </div>
         </div>
@@ -2882,79 +2894,9 @@ async function checkFolderStructure(dirHandle) {
 
   document.getElementById('photo-empty').style.display = 'none';
   document.getElementById('photo-check-results').style.display = 'block';
-  document.getElementById('folder-api-note').textContent = `📂 분석 완료: ${scannedFolders.length}개 폴더 스캔됨`;
-}
-
-// -------- 파일 직접 선택 방식 (폴백) --------
-async function handlePhotoFiles(files) {
-  if (!files || files.length === 0) return;
-
-  document.getElementById('photo-empty').style.display = 'none';
-  document.getElementById('photo-check-results').style.display = 'block';
-
-  const companyFilter = document.getElementById('photo-filter-company').value;
-  let faceMeetings = state.meetings.filter(m => {
-    const c = state.companies.find(co => co.id === m.companyId);
-    const t = c ? getMeetingType(c, m.typeId) : null;
-    return t?.isFace;
-  });
-  if (companyFilter) faceMeetings = faceMeetings.filter(m => m.companyId === companyFilter);
-
-  const faceDates = new Set(faceMeetings.map(m => m.date));
-  const matchedDates = new Set();
-  let matchCount=0, mismatchCount=0, nodateCount=0;
-  let fileListHtml = '';
-
-  for (const file of Array.from(files)) {
-    const exif = await readExifDate(file);
-    let photoDate = exif?.date || null;
-    const exifTime = exif?.time || null;
-    if (!photoDate) photoDate = extractDateFromFilename(file.name);
-    const nameTime = extractTimeFromFilename(file.name);
-
-    let icon, cls, statusText;
-    if (!photoDate) {
-      icon='⚠️'; cls=''; nodateCount++;
-      statusText='날짜 미확인';
-    } else if (faceDates.has(photoDate)) {
-      icon='✅'; cls='photo-match'; matchCount++;
-      matchedDates.add(photoDate);
-      const m = faceMeetings.find(m => m.date===photoDate);
-      const c = state.companies.find(co=>co.id===m?.companyId);
-      statusText=`일치 — ${c?.name||'?'} ${m?.typeId||''}`;
-    } else {
-      icon='❌'; cls='photo-mismatch'; mismatchCount++;
-      statusText=`불일치 — ${formatDate(photoDate)} 미팅 없음`;
-    }
-
-    fileListHtml += `<div class="photo-item ${cls}">
-      <div class="photo-icon">${icon}</div>
-      <div class="photo-info">
-        <div class="photo-filename">${file.name}</div>
-        <div class="photo-date">📅 ${photoDate||'날짜 없음'} ${exifTime?'⏰'+exifTime:''}${nameTime?' (파일명 '+nameTime+')':''} — ${statusText}</div>
-      </div>
-    </div>`;
-  }
-
-  const missingDates = faceMeetings.filter(m => !matchedDates.has(m.date));
-  let missingHtml = missingDates.length===0
-    ? '<div class="alert-box alert-success">모든 현장방문 날짜에 사진이 확인됩니다. ✅</div>'
-    : missingDates.map(m => {
-        const c=state.companies.find(co=>co.id===m.companyId);
-        return `<div class="photo-item" style="background:#fff3cd;"><span>📷</span><div><div style="font-weight:700;">${getSuggestedFolderName(m)}</div><div style="font-size:11px;">${c?.name||'?'} · ${formatDate(m.date)} · 사진 없음</div></div></div>`;
-      }).join('');
-
-  document.getElementById('photo-match-count').textContent = matchCount;
-  document.getElementById('photo-folder-mismatch').textContent = '-';
-  document.getElementById('photo-duplicate-date').textContent = '-';
-  document.getElementById('photo-internal-conflict').textContent = '-';
-  document.getElementById('photo-mismatch-count').textContent = mismatchCount;
-  document.getElementById('photo-nodate-count').textContent = nodateCount;
-  document.getElementById('photo-missing-count').textContent = '-';
-  document.getElementById('folder-check-results').innerHTML = `<div style="font-size:13px;font-weight:700;margin-bottom:8px;">📷 사진 파일 분석 결과</div>` + fileListHtml;
-  document.getElementById('photo-missing-list').innerHTML = missingHtml;
-  document.getElementById('photo-empty').style.display = 'none';
-  document.getElementById('photo-check-results').style.display = 'block';
+  const modeLabel = mode === 'company' ? '🏢 회사별 크로스체크' : '📂 단일 회사 검증';
+  const conflictNote = duplicateDateCount > 0 ? ` · ⚠️ 날짜 중복 ${duplicateDateCount}건 발견` : '';
+  document.getElementById('folder-api-note').textContent = `${modeLabel} 완료: ${scannedFolders.length}개 폴더 스캔됨${conflictNote}`;
 }
 
 function clearPhotoResults() {
