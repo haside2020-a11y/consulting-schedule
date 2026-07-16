@@ -609,6 +609,10 @@ async function dbSave(key, val) {
             <div class="check-stat-num" id="photo-duplicate-date" style="color:var(--danger);">0</div>
             <div class="check-stat-label" style="color:var(--danger);">🔁 날짜 중복</div>
           </div>
+          <div class="check-stat" style="background:#fee2e2;">
+            <div class="check-stat-num" id="photo-internal-conflict" style="color:var(--danger);">0</div>
+            <div class="check-stat-label" style="color:var(--danger);">📅 폴더 내 사진끼리 날짜 다름</div>
+          </div>
           <div class="check-stat" style="background:#ffedd5;">
             <div class="check-stat-num" id="photo-nodate-count" style="color:var(--warning);">0</div>
             <div class="check-stat-label" style="color:var(--warning);">⚠️ 날짜 미확인</div>
@@ -2728,7 +2732,7 @@ async function checkFolderStructure(dirHandle) {
   const folderDateCounts = {};
   scannedFolders.forEach(f => { folderDateCounts[f.folderDate] = (folderDateCounts[f.folderDate] || 0) + 1; });
 
-  let totalMatch=0, folderMismatch=0, exifMismatch=0, duplicateDateCount=0, noDate=0, noPhoto=0;
+  let totalMatch=0, folderMismatch=0, exifMismatch=0, duplicateDateCount=0, noDate=0, noPhoto=0, internalMismatchCount=0;
   let folderResultHtml = '';
 
   for (const folder of scannedFolders) {
@@ -2758,6 +2762,27 @@ async function checkFolderStructure(dirHandle) {
 
     if (photos.length === 0 && isFaceMeeting !== false) { noPhoto++; }
 
+    // ②-1 폴더 내 사진 파일명끼리 날짜 크로스체크 (사용자가 파일명 자체를 잘못 입력했을 가능성 대비)
+    // 폴더명과는 별개로, 같은 폴더 안 사진들의 파일명 날짜가 서로 다르면 그 폴더 안에 잘못된 사진이
+    // 섞여 있다는 신호이므로 별도로 표시한다.
+    const nameDateFreq = {};
+    photos.forEach(p => {
+      const d = extractDateFromFilename(p.name);
+      if (d) nameDateFreq[d] = (nameDateFreq[d] || 0) + 1;
+    });
+    const distinctPhotoDates = Object.keys(nameDateFreq);
+    const hasInternalDateConflict = distinctPhotoDates.length > 1;
+    // 다수결 날짜 (동률이면 폴더명 날짜를 우선)
+    const majorityDate = distinctPhotoDates.length
+      ? distinctPhotoDates.reduce((best, d) => {
+          if (!best) return d;
+          if (nameDateFreq[d] > nameDateFreq[best]) return d;
+          if (nameDateFreq[d] === nameDateFreq[best] && d === folder.folderDate) return d;
+          return best;
+        }, null)
+      : null;
+    if (hasInternalDateConflict) internalMismatchCount++;
+
     // ② 각 사진 체크: 일정(폴더명 날짜) vs 파일명 날짜로 판정.
     // EXIF는 카톡 전송·이미지 편집 등으로 메타데이터가 지워지는 경우가 흔해 더 이상 판정에 쓰지 않고, 참고용으로만 표시.
     let photoRows = '';
@@ -2767,6 +2792,8 @@ async function checkFolderStructure(dirHandle) {
       const nameDate = extractDateFromFilename(photo.name);
       const nameTime = extractTimeFromFilename(photo.name);
       const nameOk = nameDate ? nameDate === folder.folderDate : null;
+      // 같은 폴더의 다른 사진들과 날짜가 다른지 (폴더명 기준 판정과는 별개의 신호)
+      const isOutlierAmongPhotos = hasInternalDateConflict && nameDate && nameDate !== majorityDate;
 
       let exifDate = null, exifTime = null;
       if (!isIlteo) {
@@ -2789,12 +2816,13 @@ async function checkFolderStructure(dirHandle) {
         <span>${icon}</span>
         <span style="flex:1;font-weight:600;min-width:130px;">${photo.name}</span>
         <span style="color:${nameOk?'var(--success)':nameOk===false?'var(--danger)':'var(--warning)'};">파일명: ${nameDate||'?'}${nameTime?' '+nameTime:''}</span>
+        ${isOutlierAmongPhotos ? `<span style="color:var(--danger);font-weight:700;">⚠️ 같은 폴더 내 다른 사진(${majorityDate})과 날짜 다름</span>` : ''}
         ${exifLabel}
       </div>`;
     }
 
     // 전체 상태 판단
-    const allOk = folderNameOk !== false && !anyExifMismatch && !isDuplicateDate && (photos.length > 0 || isFaceMeeting === false);
+    const allOk = folderNameOk !== false && !anyExifMismatch && !isDuplicateDate && !hasInternalDateConflict && (photos.length > 0 || isFaceMeeting === false);
     if (allOk) totalMatch++;
 
     const statusColor = allOk ? '#dcfce7' : '#fee2e2';
@@ -2817,6 +2845,7 @@ async function checkFolderStructure(dirHandle) {
         </div>
       </div>
       ${isDuplicateDate ? `<div style="font-size:11px;color:var(--danger);font-weight:700;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:6px 8px;margin-bottom:6px;">🔁 같은 날짜(${formatDate(folder.folderDate)})를 가리키는 폴더가 ${folderDateCounts[folder.folderDate]}개 있습니다 — 컨설팅 일정은 하루 1건만 가능합니다. 폴더명을 확인하세요.</div>` : ''}
+      ${hasInternalDateConflict ? `<div style="font-size:11px;color:var(--danger);font-weight:700;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:6px 8px;margin-bottom:6px;">📅 이 폴더 안 사진들의 파일명 날짜가 서로 다릅니다: ${distinctPhotoDates.map(d=>`${d}(${nameDateFreq[d]}장)`).join(', ')} — 사진을 잘못된 폴더에 넣었거나 파일명을 잘못 입력했을 수 있습니다.</div>` : ''}
       ${photos.length > 0 ? `<div>${photoRows}</div>` : (isFaceMeeting === false ? '<div style="font-size:11px;color:var(--gray-500);">➖ 비대면 미팅 — 사진 불필요</div>' : '<div style="font-size:11px;color:var(--warning);">⚠️ 이 폴더에 사진이 없습니다.</div>')}
     </div>`;
   }
@@ -2845,6 +2874,7 @@ async function checkFolderStructure(dirHandle) {
   document.getElementById('photo-folder-mismatch').textContent = folderMismatch;
   document.getElementById('photo-mismatch-count').textContent = exifMismatch;
   document.getElementById('photo-duplicate-date').textContent = duplicateDateCount;
+  document.getElementById('photo-internal-conflict').textContent = internalMismatchCount;
   document.getElementById('photo-nodate-count').textContent = noDate;
   document.getElementById('photo-missing-count').textContent = noPhoto;
   document.getElementById('folder-check-results').innerHTML = folderResultHtml || '<div style="color:var(--gray-400);font-size:13px;">날짜 폴더가 없거나 인식되지 않았습니다.</div>';
@@ -2917,6 +2947,7 @@ async function handlePhotoFiles(files) {
   document.getElementById('photo-match-count').textContent = matchCount;
   document.getElementById('photo-folder-mismatch').textContent = '-';
   document.getElementById('photo-duplicate-date').textContent = '-';
+  document.getElementById('photo-internal-conflict').textContent = '-';
   document.getElementById('photo-mismatch-count').textContent = mismatchCount;
   document.getElementById('photo-nodate-count').textContent = nodateCount;
   document.getElementById('photo-missing-count').textContent = '-';
